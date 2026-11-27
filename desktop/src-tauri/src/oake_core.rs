@@ -60,19 +60,19 @@ struct TsaAuthorityDesc {
 const PRIMARY_TSA_EU: TsaAuthorityDesc = TsaAuthorityDesc {
     tsa: "certum-eu",
     url: "http://time.certum.pl",
-    jurisdiction: "EU / Poland (Asseco Certum eIDAS QTSA)",
+    jurisdiction: "EU / Poland (Asseco Certum)",
 };
 
 const SECONDARY_TSA_US: TsaAuthorityDesc = TsaAuthorityDesc {
     tsa: "digicert-us",
     url: "http://timestamp.digicert.com",
-    jurisdiction: "US / WebTrust (DigiCert Assured ID TSA)",
+    jurisdiction: "US (DigiCert)",
 };
 
 const SECONDARY_TSA_FAILOVER_UK: TsaAuthorityDesc = TsaAuthorityDesc {
     tsa: "sectigo-uk",
     url: "http://timestamp.sectigo.com",
-    jurisdiction: "UK / WebTrust (Sectigo Qualified TSA)",
+    jurisdiction: "UK (Sectigo)",
 };
 
 const OTS_CALENDARS: &[(&str, &str)] = &[
@@ -703,6 +703,19 @@ fn decode_pkcs8_pem_seed(pem: &str) -> Result<[u8; 32], String> {
     Err("Unsupported or malformed Ed25519 PKCS#8 PEM key".to_string())
 }
 
+/// Creates a file only its owner can read, with that permission from the first
+/// moment it exists. Never overwrites: an existing signing key must survive.
+fn write_new_private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(path)?, contents)
+}
+
 fn load_or_create_identity_internal() -> Result<(StoredIdentityFile, SigningKey, PathBuf), String> {
     let oake_home = get_oake_home()?;
     fs::create_dir_all(&oake_home)
@@ -733,13 +746,8 @@ fn load_or_create_identity_internal() -> Result<(StoredIdentityFile, SigningKey,
             "{}\n",
             serde_json::to_string_pretty(&created).map_err(|e| e.to_string())?
         );
-        fs::write(&key_path, serialized)
+        write_new_private_file(&key_path, serialized.as_bytes())
             .map_err(|e| format!("Failed to write {}: {}", key_path.display(), e))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
-        }
         created
     };
 
@@ -3447,5 +3455,25 @@ mod path_tests {
         assert_eq!(expand_user_path("~", Some(home)), home);
         assert_eq!(expand_user_path("/abs/~/x", Some(home)), PathBuf::from("/abs/~/x"));
         assert_eq!(expand_user_path("~other/x", Some(home)), PathBuf::from("~other/x"));
+    }
+}
+
+#[cfg(test)]
+mod key_file_tests {
+    use super::*;
+
+    #[test]
+    fn private_files_are_owner_only_and_never_overwritten() {
+        let path = std::env::temp_dir().join(format!("oake-key-test-{}", std::process::id()));
+        let _ = fs::remove_file(&path);
+        write_new_private_file(&path, b"first").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(write_new_private_file(&path, b"second").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"first");
+        fs::remove_file(&path).unwrap();
     }
 }

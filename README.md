@@ -16,7 +16,9 @@ OAKe provides verifiable, offline-capable provenance proofs for research artifac
 
 2. **Dual RFC 3161 X.509 Trusted Timestamping Authorities (TSAs)**
    - **Primary EU TSA**: Asseco Certum (`http://time.certum.pl`).
-   - **Secondary US TSA**: DigiCert Assured ID (`http://timestamp.digicert.com`, WebTrust; automatic failover to Sectigo UK `http://timestamp.sectigo.com`).
+   - **Secondary US TSA**: DigiCert Assured ID (`http://timestamp.digicert.com`; automatic failover to Sectigo UK `http://timestamp.sectigo.com`).
+
+   - These are the free public endpoints. OAKe does not claim they issue eIDAS *qualified* timestamps; if you need that legal status, use a qualified service and check each provider's terms of use.
 
 3. **OpenTimestamps (OTS) Bitcoin Anchoring**
    - Batches local artifact digests into a Merkle tree with a 16-byte blinding nonce and submits commitments to **OpenTimestamps Alice** (`https://alice.btc.calendar.opentimestamps.org`, with Finney / Bob failover) using built-in anti-spam rate guards.
