@@ -25,7 +25,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzRDVCRkJGNzNDOEMyNDcKUldSSHdzaHp2Ny9WVSttMU54NVVjSHNyK0swTmpxSWF0Lzh1bkt0b3Frcnl1dzhvNVo4d3p6T3oK",
       "endpoints": [
         "https://github.com/Madara-Labs/OAKe/releases/latest/download/latest.json"
       ]
