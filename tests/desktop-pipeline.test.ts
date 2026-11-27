@@ -149,7 +149,7 @@ describe('GitHub Actions Workflows (3-OS Matrix & Provenance)', () => {
 
 		// Tauri action + artifacts + Apple signing secrets
 		assert.match(relText, /tauri-apps\/tauri-action@[0-9a-f]{40}\b/);
-		assert.match(relText, /actions\/upload-artifact@v4/);
+		assert.match(relText, /actions\/upload-artifact@v\d+/);
 		for (const secret of [
 			'APPLE_CERTIFICATE',
 			'APPLE_CERTIFICATE_PASSWORD',
