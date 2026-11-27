@@ -163,7 +163,7 @@ describe('GitHub Actions Workflows (3-OS Matrix & Provenance)', () => {
 
 		// Provenance attestation job
 		assert.match(relText, /provenance-attestation:/);
-		assert.match(relText, /needs:\s*build-desktop/);
+		assert.match(relText, /needs:\s*(\[[^\]]*)?build-desktop/);
 		assert.match(relText, /SHA256SUMS\.txt/);
 		assert.match(relText, /node cli\/oake\.mjs capture/);
 		assert.match(relText, /\.oake\/proofs\/\*\.oake\.zip/);

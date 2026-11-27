@@ -1186,3 +1186,11 @@ html, body {
 	user-select: all;
 	overflow-wrap: anywhere;
 }
+
+.update-notes {
+	max-height: 120px;
+	overflow: auto;
+	white-space: pre-wrap;
+	font-size: 11px;
+	margin: 6px 0;
+}

@@ -83,13 +83,37 @@ node cli/oake.mjs verify .oake/proofs/<entry_id>.oake.zip --file ./paper.tex --o
 
 ### Triggering a Release or Test Build
 
-- **Tagged Release** (creates a draft GitHub Release with installers, `SHA256SUMS.txt`, and `.oake.zip` proof):
+- **New Release** (the usual way): change the version, merge it into `main` through a pull request, and the
+  **New Release** workflow builds a draft GitHub Release with installers, `SHA256SUMS.txt` and an `.oake.zip` proof.
+  Review the draft and publish it.
   ```bash
-  git tag v0.1.0
-  git push origin v0.1.0
+  npm run version:set 0.2.0
+  ```
+  If a build fails, use **Re-run failed jobs** on that run.
+- **Manual Tag** (the tag must match the version in the repository):
+  ```bash
+  git tag v0.2.0
+  git push origin v0.2.0
   ```
 - **On-Demand Test Build** (no tag required — downloads directly from GitHub Actions Artifacts):
   Open the **Actions** tab → **Release Desktop** → **Run workflow** (`workflow_dispatch`).
+
+### In-App Updates
+
+Settings → **Check for updates** installs newer published releases on macOS, Windows and Linux (AppImage, `.deb`,
+`.rpm`; the Linux packages ask for an administrator password). Drafts and pre-releases are not offered.
+
+Updates must be signed. Set this up once:
+
+```bash
+npx @tauri-apps/cli signer generate -w ~/.tauri/oake-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY -R Madara-Labs/OAKe < ~/.tauri/oake-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD -R Madara-Labs/OAKe
+```
+
+Then put the contents of `~/.tauri/oake-updater.key.pub` in `plugins.updater.pubkey` in
+`desktop/src-tauri/tauri.conf.json`. Back up the private key and its password: without them, installed copies
+can never be updated again.
 
 ### Optional Code-Signing Secrets
 

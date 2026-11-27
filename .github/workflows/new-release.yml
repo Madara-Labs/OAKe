@@ -1,0 +1,61 @@
+name: New Release
+
+# When a version that has never been released reaches main, build it into a draft release.
+# Change the version with `npm run version:set 0.2.0` and merge that through a pull request.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: new-release
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect new version
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # draft releases are only listed for writers
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Compare version with existing tags and releases
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node scripts/set-version.mjs --check)
+          export TAG="v$version"
+          releases=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.tag_name == env.TAG) | .id')
+          tags=$(git ls-remote --tags origin "refs/tags/$TAG")
+          if [ -z "$releases$tags" ]; then
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "Releasing $TAG" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$TAG already exists; nothing to release" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release:
+    name: Release
+    needs: detect
+    if: needs.detect.outputs.tag != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      tag: ${{ needs.detect.outputs.tag }}
+    secrets: inherit

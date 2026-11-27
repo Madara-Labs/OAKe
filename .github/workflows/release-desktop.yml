@@ -5,16 +5,69 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Version tag to release, such as v0.2.0
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+env:
+  # Empty for a test build, which produces workflow artifacts but no release.
+  RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+
 jobs:
+  draft-release:
+    name: Prepare draft release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+      skip: ${{ steps.draft.outputs.skip }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # One job creates the release so the three builds cannot each create their own.
+      # A published release is never rebuilt: publishing a draft pushes its tag again.
+      - name: Create or reuse the draft release
+        id: draft
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/set-version.mjs --check "${RELEASE_TAG#v}"
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.tag_name == env.RELEASE_TAG) | "\(.id) \(.draft)"')
+          read -r id draft <<< "$existing" || true
+          if [ "$draft" = "false" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$RELEASE_TAG is already published" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$RELEASE_TAG" -f target_commitish="$GITHUB_SHA" -f name="OAKe $RELEASE_TAG" \
+              -F draft=true -F generate_release_notes=true --jq .id)
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   build-desktop:
+    needs: draft-release
+    if: needs.draft-release.outputs.skip != 'true'
     name: Build (${{ matrix.os_label }} / ${{ matrix.target }})
     runs-on: ${{ matrix.platform }}
     permissions:
-      contents: write # create the draft release on tag builds
+      contents: write # upload installers to the draft release
     strategy:
       fail-fast: false
       matrix:
@@ -88,22 +141,39 @@ jobs:
             fi
           done
 
-      - name: Build Tauri installers and upload to draft GitHub Release (tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Signed update packages need the private key. Without it, installers build as before.
+      - name: Enable signed updates
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "No update signing key: this build offers no in-app update" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! node -e 'process.exit(require("./desktop/src-tauri/tauri.conf.json").plugins.updater.pubkey ? 0 : 1)'; then
+            echo "::error::A signing key is set but plugins.updater.pubkey is empty"
+            exit 1
+          fi
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            printf '%s<<__OAKE_EOF__\n%s\n__OAKE_EOF__\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done
+          node -e 'const fs = require("fs"), f = "desktop/src-tauri/tauri.conf.json", c = JSON.parse(fs.readFileSync(f)); c.bundle.createUpdaterArtifacts = true; fs.writeFileSync(f, JSON.stringify(c, null, 2))'
+
+      - name: Build Tauri installers and upload to the draft release
+        if: env.RELEASE_TAG != ''
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop/src-tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: "OAKe ${{ github.ref_name }}"
-          releaseBody: "Cross-platform OAKe Desktop installers and cryptographic provenance attestation."
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.draft-release.outputs.id }}
+          uploadUpdaterJson: false
           args: --target ${{ matrix.target }}
 
-      - name: Build Tauri installers (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Build Tauri installers (test build)
+        if: env.RELEASE_TAG == ''
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,7 +197,7 @@ jobs:
 
   provenance-attestation:
     name: Provenance Attestation (OAKe Self-Stamp)
-    needs: build-desktop
+    needs: [draft-release, build-desktop]
     runs-on: ubuntu-22.04
     permissions:
       contents: write # attach checksums and proof to the release
@@ -177,11 +247,31 @@ jobs:
             .oake/proofs/*.oake.zip
 
       - name: Attach SHA256SUMS.txt and .oake.zip proof to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.ref_name }}" \
+          gh release upload "$RELEASE_TAG" \
             release-artifacts/SHA256SUMS.txt \
             .oake/proofs/*.oake.zip \
             --clobber
+
+      - name: Publish the update manifest
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.draft-release.outputs.id }}
+        run: |
+          mkdir -p signatures
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
+            --jq '.[] | select(.name | endswith(".sig")) | "\(.id) \(.name)"' > signature-assets.txt
+          if [ ! -s signature-assets.txt ]; then
+            echo "No signed update packages; latest.json not published" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          while read -r id name; do
+            gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "signatures/$name"
+          done < signature-assets.txt
+          node scripts/update-manifest.mjs "$GITHUB_REPOSITORY" "$RELEASE_TAG" signatures latest.json
+          gh release upload "$RELEASE_TAG" latest.json --clobber
+
