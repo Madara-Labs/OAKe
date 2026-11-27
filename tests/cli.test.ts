@@ -137,7 +137,8 @@ describe('OAKe CLI (cli/oake.mjs)', () => {
 		assert.ok(!Number.isNaN(Date.parse(keyData.createdAt)));
 
 		const mode = fs.statSync(keyPath).mode & 0o777;
-		assert.equal(mode, 0o600);
+		// Windows has no POSIX permission bits.
+		if (process.platform !== 'win32') assert.equal(mode, 0o600);
 
 		const configYaml = fs.readFileSync(configPath, 'utf8');
 		assert.ok(configYaml.includes('hash_paths: true'));
@@ -299,7 +300,9 @@ describe('OAKe CLI (cli/oake.mjs)', () => {
 		assert.equal(fs.existsSync(hookPath), true);
 
 		const mode = fs.statSync(hookPath).mode;
-		assert.ok((mode & 0o111) !== 0, 'post-commit hook must be executable');
+		if (process.platform !== 'win32') {
+			assert.ok((mode & 0o111) !== 0, 'post-commit hook must be executable');
+		}
 
 		const hookContent = fs.readFileSync(hookPath, 'utf8');
 		assert.ok(hookContent.startsWith('#!/usr/bin/env bash'));
