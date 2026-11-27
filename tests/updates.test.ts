@@ -60,3 +60,12 @@ describe('desktop update settings', () => {
 		assert.match(workflow, /update-manifest\.mjs/);
 	});
 });
+
+describe('release checksums', () => {
+	it('are taken from the files in the release, under the names people download', () => {
+		const workflow = fs.readFileSync('.github/workflows/release-desktop.yml', 'utf8');
+		const step = workflow.slice(workflow.indexOf('- name: Compute SHA256SUMS.txt'), workflow.indexOf('- name: Stamp SHA256SUMS.txt'));
+		assert.match(step, /releases\/\$RELEASE_ID\/assets/);
+		assert.match(step, /releases\/assets\/\$id/);
+	});
+});
