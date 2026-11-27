@@ -244,6 +244,17 @@
 				</section>
 
 				<section class="settings-section">
+					<h3>Updates</h3>
+					<div class="settings-row">
+						<span id="update-status" role="status">Not checked yet.</span>
+						<button type="button" class="tb-btn" id="btn-check-update">Check for updates</button>
+					</div>
+					<pre class="update-notes" id="update-notes" hidden></pre>
+					<button type="button" class="tb-btn" id="btn-install-update" hidden>Install and restart</button>
+					<p class="settings-help">Checking contacts GitHub. Nothing is checked or installed unless you ask.</p>
+				</section>
+
+				<section class="settings-section">
 					<h3>Signing key</h3>
 					<button type="button" class="identity-pill font-mono" id="btn-copy-pubkey" title="Copy public key">
 						<span id="identity-pubkey-short">Loading…</span>

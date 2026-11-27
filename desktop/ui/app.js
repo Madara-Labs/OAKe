@@ -1015,6 +1015,52 @@
 		$(id).classList.add('hidden');
 	}
 
+	// Updates run only in the installed app, and only when the user asks.
+	let offeredVersion = null;
+
+	async function checkForUpdate() {
+		const status = $('update-status');
+		const button = $('btn-check-update');
+		$('btn-install-update').hidden = true;
+		$('update-notes').hidden = true;
+		if (!isTauri) {
+			status.textContent = 'Updates are available in the installed app only.';
+			return;
+		}
+		button.disabled = true;
+		status.textContent = 'Checking…';
+		try {
+			const res = await ipcInvoke('check_for_update');
+			offeredVersion = res.available?.version || null;
+			if (!res.configured) {
+				status.textContent = `Version ${res.current_version}. Updates are not set up for this build.`;
+			} else if (!offeredVersion) {
+				status.textContent = `Version ${res.current_version} is up to date.`;
+			} else {
+				status.textContent = `Version ${offeredVersion} is available. You have ${res.current_version}.`;
+				$('update-notes').textContent = res.available.notes || '';
+				$('update-notes').hidden = !res.available.notes;
+				$('btn-install-update').hidden = false;
+			}
+		} catch (err) {
+			status.textContent = err.message;
+		} finally {
+			button.disabled = false;
+		}
+	}
+
+	async function installUpdate() {
+		const buttons = [$('btn-check-update'), $('btn-install-update')];
+		buttons.forEach((b) => (b.disabled = true));
+		$('update-status').textContent = `Downloading and installing ${offeredVersion}…`;
+		try {
+			await ipcInvoke('install_update', { version: offeredVersion });
+		} catch (err) {
+			$('update-status').textContent = err.message;
+			buttons.forEach((b) => (b.disabled = false));
+		}
+	}
+
 	function openSettings(focusId) {
 		updateEndpointUI();
 		renderAutosave();
@@ -1066,6 +1112,8 @@
 
 	function bindEvents() {
 		$('btn-open-settings').addEventListener('click', () => openSettings());
+		$('btn-check-update').addEventListener('click', checkForUpdate);
+		$('btn-install-update').addEventListener('click', installUpdate);
 		$('btn-autosave').addEventListener('click', () => openSettings('setting-autosave'));
 		$('setting-autosave').addEventListener('change', (ev) => setAutosaveHours(ev.target.value));
 		$('setting-theme').addEventListener('change', (ev) => applyTheme(ev.target.value));

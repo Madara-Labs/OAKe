@@ -1,4 +1,5 @@
 mod oake_core;
+mod updates;
 
 use oake_core::{
     AnchorBatchResult, BundleVerifyResult, IdentityInfo, PushSummary, WorkspaceScanResult,
@@ -77,6 +78,7 @@ async fn push_workspace(workspace_path: String, endpoint: String) -> Result<Push
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_identity,
             list_workspaces,
@@ -86,6 +88,8 @@ pub fn run() {
             anchor_files,
             verify_bundle,
             push_workspace,
+            updates::check_for_update,
+            updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OAKe Desktop");
