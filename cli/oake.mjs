@@ -514,6 +514,27 @@ function writeZipArchive(entries) {
 	return Buffer.concat([...localChunks, centralDir, eocd]);
 }
 
+// Limits for proof bundles, which may come from anyone. Real ones are a few small files.
+const MAX_ZIP_ENTRIES = 64;
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+
+function inflateEntry(method, data, limit) {
+	const tooLarge = () => new Error('Proof bundle is too large to unpack safely');
+	if (limit <= 0) throw tooLarge();
+	if (method === 0) {
+		if (data.length > limit) throw tooLarge();
+		return data;
+	}
+	if (method !== 8) throw new Error(`Unsupported ZIP compression method ${method}`);
+	try {
+		return zlib.inflateRawSync(data, { maxOutputLength: limit });
+	} catch (err) {
+		if (err.code === 'ERR_BUFFER_TOO_LARGE') throw tooLarge();
+		throw err;
+	}
+}
+
 function readZipEntries(zipBuffer) {
 	let eocdOffset = -1;
 	const minOffset = Math.max(0, zipBuffer.length - 65557);
@@ -530,7 +551,12 @@ function readZipEntries(zipBuffer) {
 	const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
 	const cdOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
 
+	if (totalEntries > MAX_ZIP_ENTRIES) {
+		throw new Error('Proof bundle is too large: too many files');
+	}
+
 	const files = new Map();
+	let totalBytes = 0;
 	let pos = cdOffset;
 	for (let i = 0; i < totalEntries; i++) {
 		if (pos + 46 > zipBuffer.length || zipBuffer.readUInt32LE(pos) !== 0x02014b50) {
@@ -557,14 +583,8 @@ function readZipEntries(zipBuffer) {
 		const dataStart = localHeaderOffset + 30 + localFnLen + localExtraLen;
 		const compressedData = zipBuffer.subarray(dataStart, dataStart + compressedSize);
 
-		let content;
-		if (method === 0) {
-			content = compressedData;
-		} else if (method === 8) {
-			content = zlib.inflateRawSync(compressedData);
-		} else {
-			throw new Error(`Unsupported ZIP compression method ${method} for ${filename}`);
-		}
+		const content = inflateEntry(method, compressedData, Math.min(MAX_ENTRY_BYTES, MAX_TOTAL_BYTES - totalBytes));
+		totalBytes += content.length;
 
 		files.set(filename, content);
 		pos += 46 + fnLen + extraLen + commentLen;
