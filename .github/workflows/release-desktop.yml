@@ -218,8 +218,23 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
+      # The build action renames some files when uploading them, so a release is hashed
+      # from its own assets. Test builds hash the workflow artifacts.
       - name: Compute SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.draft-release.outputs.id }}
         run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            rm -rf release-artifacts
+            mkdir release-artifacts
+            gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate \
+              --jq '.[] | select(.name | test("[.](sig|oake[.]zip)$|^SHA256SUMS[.]txt$|^latest[.]json$") | not) | "\(.id) \(.name)"' > assets.txt
+            test -s assets.txt
+            while read -r id name; do
+              gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "release-artifacts/$name"
+            done < assets.txt
+          fi
           cd release-artifacts
           # List flat names as GitHub Releases serves them (spaces become dots),
           # so `sha256sum -c SHA256SUMS.txt` works on downloaded assets.
