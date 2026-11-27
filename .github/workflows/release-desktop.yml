@@ -112,7 +112,7 @@ jobs:
           args: --target ${{ matrix.target }}
 
       - name: Upload built installers as workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.os_label }}
           if-no-files-found: error
@@ -167,7 +167,7 @@ jobs:
           ls -la .oake/proofs/
 
       - name: Upload SHA256SUMS.txt and OAKe provenance bundle as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: oake-release-provenance
           if-no-files-found: error
