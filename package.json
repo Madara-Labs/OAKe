@@ -23,6 +23,7 @@
     "desktop:build:macos": "node scripts/build-desktop.mjs --platform macos",
     "desktop:build:windows": "node scripts/build-desktop.mjs --platform windows",
     "desktop:build:linux": "node scripts/build-desktop.mjs --platform linux",
-    "export-repo": "node scripts/build-desktop.mjs --export-repo"
+    "export-repo": "node scripts/build-desktop.mjs --export-repo",
+    "test": "node --test \"tests/*.test.ts\""
   }
 }

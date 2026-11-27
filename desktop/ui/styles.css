@@ -1176,3 +1176,13 @@ html, body {
 		grid-template-columns: 1fr;
 	}
 }
+
+.endpoint-examples {
+	margin: 4px 0 0;
+	padding-left: 16px;
+}
+
+.endpoint-examples code {
+	user-select: all;
+	overflow-wrap: anywhere;
+}

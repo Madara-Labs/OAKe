@@ -22,7 +22,8 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UI_DIR = path.join(__dirname, 'ui');
-const REPO_ROOT = path.resolve(__dirname, '..', '..');
+// The folder holding both cli/ and desktop/.
+const REPO_ROOT = path.resolve(__dirname, '..');
 const CLI_PATH = path.join(REPO_ROOT, 'cli', 'oake.mjs');
 
 const HOST = process.env.HOST || '127.0.0.1';
@@ -55,17 +56,17 @@ const HTTP_TIMEOUT_MS = 6_000;
 const SHA256_OID_BYTES = Uint8Array.from([0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]);
 
 const PRIMARY_TSAS = [
-	{ tsa: 'certum-eu', url: 'http://time.certum.pl', jurisdiction: 'EU / Poland (Asseco Certum eIDAS QTSA)' }
+	{ tsa: 'certum-eu', url: 'http://time.certum.pl', jurisdiction: 'EU / Poland (Asseco Certum)' }
 ];
 const SECONDARY_TSA_PRIMARY = {
 	tsa: 'digicert-us',
 	url: 'http://timestamp.digicert.com',
-	jurisdiction: 'US / WebTrust (DigiCert Assured ID TSA)'
+	jurisdiction: 'US (DigiCert)'
 };
 const SECONDARY_TSA_FAILOVER = {
 	tsa: 'sectigo-uk',
 	url: 'http://timestamp.sectigo.com',
-	jurisdiction: 'UK / WebTrust (Sectigo Qualified TSA)'
+	jurisdiction: 'UK (Sectigo)'
 };
 const OTS_CALENDARS = [
 	{ url: 'https://alice.btc.calendar.opentimestamps.org', label: 'Alice (OpenTimestamps)' },
@@ -174,6 +175,27 @@ function sanitizeZipPath(name) {
 	return normalized;
 }
 
+// Limits for proof bundles, which may come from anyone. Real ones are a few small files.
+const MAX_ZIP_ENTRIES = 64;
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+
+function inflateEntry(method, data, limit) {
+	const tooLarge = () => new Error('Proof bundle is too large to unpack safely');
+	if (limit <= 0) throw tooLarge();
+	if (method === 0) {
+		if (data.length > limit) throw tooLarge();
+		return data;
+	}
+	if (method !== 8) throw new Error(`Unsupported ZIP compression method ${method}`);
+	try {
+		return zlib.inflateRawSync(data, { maxOutputLength: limit });
+	} catch (err) {
+		if (err.code === 'ERR_BUFFER_TOO_LARGE') throw tooLarge();
+		throw err;
+	}
+}
+
 function readZipEntries(zipBuffer) {
 	let eocdOffset = -1;
 	const minOffset = Math.max(0, zipBuffer.length - 65557);
@@ -188,7 +210,12 @@ function readZipEntries(zipBuffer) {
 	}
 	const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
 	const cdOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
+	if (totalEntries > MAX_ZIP_ENTRIES) {
+		throw new Error('Proof bundle is too large: too many files');
+	}
+
 	const files = new Map();
+	let totalBytes = 0;
 	let pos = cdOffset;
 	for (let i = 0; i < totalEntries; i++) {
 		if (pos + 46 > zipBuffer.length || zipBuffer.readUInt32LE(pos) !== 0x02014b50) {
@@ -207,14 +234,8 @@ function readZipEntries(zipBuffer) {
 		const localExtraLen = zipBuffer.readUInt16LE(localHeaderOffset + 28);
 		const dataStart = localHeaderOffset + 30 + localFnLen + localExtraLen;
 		const compressedData = zipBuffer.subarray(dataStart, dataStart + compressedSize);
-		const content =
-			method === 0
-				? compressedData
-				: method === 8
-					? zlib.inflateRawSync(compressedData)
-					: (() => {
-							throw new Error(`Unsupported ZIP method ${method}`);
-						})();
+		const content = inflateEntry(method, compressedData, Math.min(MAX_ENTRY_BYTES, MAX_TOTAL_BYTES - totalBytes));
+		totalBytes += content.length;
 		files.set(filename, content);
 		pos += 46 + fnLen + extraLen + commentLen;
 	}
@@ -1426,20 +1447,15 @@ async function handleVerifyBundle(args) {
 	const cliArgs = ['verify', bundleAbs, '--offline'];
 	if (fileAbs) cliArgs.push('--file', fileAbs);
 
+	// The verdict comes from the exit code only: printed text includes values from the proof.
 	let cliOutput = '';
-	let cliValid = true;
+	let cliVerdict = 'VERIFIED';
 	try {
 		const res = await runCli(cliArgs);
 		cliOutput = res.stdout;
 	} catch (err) {
-		// Exit code 2 means "incomplete": no check failed, but not everything was proven.
-		cliValid = false;
-		cliOutput = [err.stdout, err.stderr, err.message].filter(Boolean).join('\n');
-	}
-	const cliVerdict = /verdict\s+: (VERIFIED|INCOMPLETE|FAILED)/.exec(cliOutput)?.[1];
-	if (cliVerdict === 'INCOMPLETE') {
-		cliValid = true;
-		cliOutput = cliOutput.split('\nCommand failed')[0];
+		cliVerdict = err.code === 2 ? 'INCOMPLETE' : 'FAILED';
+		cliOutput = [err.stdout, err.stderr].filter(Boolean).join('\n').trim() || err.message;
 	}
 
 	const digestHex64 = (entry.artifact_hash || '').replace(/^sha256:/i, '');
@@ -1460,11 +1476,11 @@ async function handleVerifyBundle(args) {
 	}
 
 	const valid =
-		cliValid &&
+		cliVerdict !== 'FAILED' &&
 		(!sigCheck.signed || sigCheck.valid) &&
 		(fileMatches === null || fileMatches === true);
 
-	const verdict = !valid ? 'failed' : (cliVerdict || 'INCOMPLETE').toLowerCase();
+	const verdict = !valid ? 'failed' : cliVerdict.toLowerCase();
 
 	return {
 		valid: verdict === 'verified',

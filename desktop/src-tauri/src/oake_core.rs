@@ -60,19 +60,19 @@ struct TsaAuthorityDesc {
 const PRIMARY_TSA_EU: TsaAuthorityDesc = TsaAuthorityDesc {
     tsa: "certum-eu",
     url: "http://time.certum.pl",
-    jurisdiction: "EU / Poland (Asseco Certum eIDAS QTSA)",
+    jurisdiction: "EU / Poland (Asseco Certum)",
 };
 
 const SECONDARY_TSA_US: TsaAuthorityDesc = TsaAuthorityDesc {
     tsa: "digicert-us",
     url: "http://timestamp.digicert.com",
-    jurisdiction: "US / WebTrust (DigiCert Assured ID TSA)",
+    jurisdiction: "US (DigiCert)",
 };
 
 const SECONDARY_TSA_FAILOVER_UK: TsaAuthorityDesc = TsaAuthorityDesc {
     tsa: "sectigo-uk",
     url: "http://timestamp.sectigo.com",
-    jurisdiction: "UK / WebTrust (Sectigo Qualified TSA)",
+    jurisdiction: "UK (Sectigo)",
 };
 
 const OTS_CALENDARS: &[(&str, &str)] = &[
@@ -703,6 +703,19 @@ fn decode_pkcs8_pem_seed(pem: &str) -> Result<[u8; 32], String> {
     Err("Unsupported or malformed Ed25519 PKCS#8 PEM key".to_string())
 }
 
+/// Creates a file only its owner can read, with that permission from the first
+/// moment it exists. Never overwrites: an existing signing key must survive.
+fn write_new_private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(path)?, contents)
+}
+
 fn load_or_create_identity_internal() -> Result<(StoredIdentityFile, SigningKey, PathBuf), String> {
     let oake_home = get_oake_home()?;
     fs::create_dir_all(&oake_home)
@@ -733,13 +746,8 @@ fn load_or_create_identity_internal() -> Result<(StoredIdentityFile, SigningKey,
             "{}\n",
             serde_json::to_string_pretty(&created).map_err(|e| e.to_string())?
         );
-        fs::write(&key_path, serialized)
+        write_new_private_file(&key_path, serialized.as_bytes())
             .map_err(|e| format!("Failed to write {}: {}", key_path.display(), e))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
-        }
         created
     };
 
@@ -1046,13 +1054,30 @@ fn verify_index_chain(rows: &[LocalIndexRow]) -> bool {
     true
 }
 
+// Limits for proof bundles, which may come from anyone. Real ones are a few small files.
+const MAX_ZIP_ENTRIES: usize = 64;
+const MAX_ENTRY_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_TOTAL_BYTES: u64 = 24 * 1024 * 1024;
+
+/// Reads at most `limit` bytes, whatever size the archive claims.
+fn read_limited(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut data = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| format!("Failed to read ZIP entry: {}", e))?;
+    if data.len() as u64 > limit {
+        return Err("Proof bundle is too large to unpack safely".to_string());
+    }
+    Ok(data)
+}
+
 fn read_entry_from_bundle_file(bundle_path: &Path) -> Option<LedgerEntry> {
     let bytes = fs::read(bundle_path).ok()?;
     let mut archive = ZipArchive::new(Cursor::new(bytes)).ok()?;
-    let mut entry_file = archive.by_name("entry.json").ok()?;
-    let mut buf = String::new();
-    entry_file.read_to_string(&mut buf).ok()?;
-    serde_json::from_str::<LedgerEntry>(&buf).ok()
+    let entry_file = archive.by_name("entry.json").ok()?;
+    let buf = read_limited(entry_file, MAX_ENTRY_BYTES).ok()?;
+    serde_json::from_slice::<LedgerEntry>(&buf).ok()
 }
 
 fn generate_verify_markdown(entry: &LedgerEntry) -> String {
@@ -3019,7 +3044,12 @@ pub fn verify_bundle(
     let mut archive = ZipArchive::new(Cursor::new(zip_bytes))
         .map_err(|e| format!("Invalid ZIP archive {}: {}", bundle_path, e))?;
 
+    if archive.len() > MAX_ZIP_ENTRIES {
+        return Err("Proof bundle is too large: too many files".to_string());
+    }
+
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut total_bytes = 0u64;
     for i in 0..archive.len() {
         let mut f = archive
             .by_index(i)
@@ -3027,10 +3057,11 @@ pub fn verify_bundle(
         if f.is_dir() {
             continue;
         }
-        let mut data = Vec::new();
-        f.read_to_end(&mut data)
-            .map_err(|e| format!("Failed to read ZIP entry {}: {}", f.name(), e))?;
-        files.insert(f.name().to_string(), data);
+        let name = f.name().to_string();
+        let limit = MAX_ENTRY_BYTES.min(MAX_TOTAL_BYTES - total_bytes);
+        let data = read_limited(&mut f, limit)?;
+        total_bytes += data.len() as u64;
+        files.insert(name, data);
     }
 
     let entry_raw = files
@@ -3447,5 +3478,49 @@ mod path_tests {
         assert_eq!(expand_user_path("~", Some(home)), home);
         assert_eq!(expand_user_path("/abs/~/x", Some(home)), PathBuf::from("/abs/~/x"));
         assert_eq!(expand_user_path("~other/x", Some(home)), PathBuf::from("~other/x"));
+    }
+}
+
+#[cfg(test)]
+mod key_file_tests {
+    use super::*;
+
+    #[test]
+    fn private_files_are_owner_only_and_never_overwritten() {
+        let path = std::env::temp_dir().join(format!("oake-key-test-{}", std::process::id()));
+        let _ = fs::remove_file(&path);
+        write_new_private_file(&path, b"first").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(write_new_private_file(&path, b"second").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"first");
+        fs::remove_file(&path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod bundle_limit_tests {
+    use super::*;
+
+    #[test]
+    fn reads_up_to_the_limit_and_no_further() {
+        assert_eq!(read_limited(&[7u8; 16][..], 16).unwrap().len(), 16);
+        assert!(read_limited(&[7u8; 17][..], 16).is_err());
+        assert!(read_limited(std::io::repeat(0), 1024).is_err());
+    }
+
+    #[test]
+    fn refuses_a_bundle_that_unpacks_too_large() {
+        let path = std::env::temp_dir().join(format!("oake-bomb-{}.oake.zip", std::process::id()));
+        let mut zip = ZipWriter::new(fs::File::create(&path).unwrap());
+        zip.start_file("entry.json", SimpleFileOptions::default()).unwrap();
+        zip.write_all(&vec![b' '; MAX_ENTRY_BYTES as usize + 1]).unwrap();
+        zip.finish().unwrap();
+        let result = verify_bundle(path.to_string_lossy().into_owned(), None);
+        let _ = fs::remove_file(&path);
+        assert!(result.err().unwrap().contains("too large"));
     }
 }

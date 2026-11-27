@@ -65,3 +65,6 @@ jobs:
 
       - name: Smoke test standalone CLI
         run: node cli/oake.mjs --help
+
+      - name: Run JavaScript tests
+        run: npm test

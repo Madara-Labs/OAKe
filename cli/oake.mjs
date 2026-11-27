@@ -35,17 +35,17 @@ const MAX_OTS_TREE_DEPTH = 256;
 const SHA256_OID_BYTES = Uint8Array.from([0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]);
 
 const PRIMARY_TSAS = [
-	{ tsa: 'certum-eu', url: 'http://time.certum.pl', jurisdiction: 'EU / Poland (Asseco Certum eIDAS QTSA)' }
+	{ tsa: 'certum-eu', url: 'http://time.certum.pl', jurisdiction: 'EU / Poland (Asseco Certum)' }
 ];
 const SECONDARY_TSA_PRIMARY = {
 	tsa: 'digicert-us',
 	url: 'http://timestamp.digicert.com',
-	jurisdiction: 'US / WebTrust (DigiCert Assured ID TSA)'
+	jurisdiction: 'US (DigiCert)'
 };
 const SECONDARY_TSA_FAILOVER = {
 	tsa: 'sectigo-uk',
 	url: 'http://timestamp.sectigo.com',
-	jurisdiction: 'UK / WebTrust (Sectigo Qualified TSA)'
+	jurisdiction: 'UK (Sectigo)'
 };
 
 const OTS_CALENDARS = [
@@ -514,6 +514,27 @@ function writeZipArchive(entries) {
 	return Buffer.concat([...localChunks, centralDir, eocd]);
 }
 
+// Limits for proof bundles, which may come from anyone. Real ones are a few small files.
+const MAX_ZIP_ENTRIES = 64;
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+
+function inflateEntry(method, data, limit) {
+	const tooLarge = () => new Error('Proof bundle is too large to unpack safely');
+	if (limit <= 0) throw tooLarge();
+	if (method === 0) {
+		if (data.length > limit) throw tooLarge();
+		return data;
+	}
+	if (method !== 8) throw new Error(`Unsupported ZIP compression method ${method}`);
+	try {
+		return zlib.inflateRawSync(data, { maxOutputLength: limit });
+	} catch (err) {
+		if (err.code === 'ERR_BUFFER_TOO_LARGE') throw tooLarge();
+		throw err;
+	}
+}
+
 function readZipEntries(zipBuffer) {
 	let eocdOffset = -1;
 	const minOffset = Math.max(0, zipBuffer.length - 65557);
@@ -530,7 +551,12 @@ function readZipEntries(zipBuffer) {
 	const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
 	const cdOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
 
+	if (totalEntries > MAX_ZIP_ENTRIES) {
+		throw new Error('Proof bundle is too large: too many files');
+	}
+
 	const files = new Map();
+	let totalBytes = 0;
 	let pos = cdOffset;
 	for (let i = 0; i < totalEntries; i++) {
 		if (pos + 46 > zipBuffer.length || zipBuffer.readUInt32LE(pos) !== 0x02014b50) {
@@ -557,14 +583,8 @@ function readZipEntries(zipBuffer) {
 		const dataStart = localHeaderOffset + 30 + localFnLen + localExtraLen;
 		const compressedData = zipBuffer.subarray(dataStart, dataStart + compressedSize);
 
-		let content;
-		if (method === 0) {
-			content = compressedData;
-		} else if (method === 8) {
-			content = zlib.inflateRawSync(compressedData);
-		} else {
-			throw new Error(`Unsupported ZIP compression method ${method} for ${filename}`);
-		}
+		const content = inflateEntry(method, compressedData, Math.min(MAX_ENTRY_BYTES, MAX_TOTAL_BYTES - totalBytes));
+		totalBytes += content.length;
 
 		files.set(filename, content);
 		pos += 46 + fnLen + extraLen + commentLen;
@@ -2222,6 +2242,11 @@ async function cmdProof(positionals, flags, oakeHome) {
 	console.log(`Saved proof bundle (${bytes.byteLength} bytes) to ${outPath}`);
 }
 
+/** Proof files are untrusted: no value from one may start a new line of output. */
+function oneLine(value) {
+	return String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ');
+}
+
 async function cmdVerify(positionals, flags, oakeHome) {
 	const target = positionals[0];
 	if (!target) {
@@ -2315,9 +2340,9 @@ async function cmdVerify(positionals, flags, oakeHome) {
 			}
 		}
 
-		console.log(`Local bundle inspection (${bundlePath}):`);
-		console.log(`  entry_id      : ${entry.entry_id}`);
-		console.log(`  artifact_hash : ${entry.artifact_hash} (${entry.canonicalization})`);
+		console.log(`Local bundle inspection (${oneLine(bundlePath)}):`);
+		console.log(`  entry_id      : ${oneLine(entry.entry_id)}`);
+		console.log(`  artifact_hash : ${oneLine(entry.artifact_hash)} (${oneLine(entry.canonicalization)})`);
 		console.log(
 			`  signature     : ${sigResult.signed ? (sigResult.valid ? 'VALID (Ed25519)' : 'INVALID') : 'anonymous'}`
 		);
@@ -2335,7 +2360,7 @@ async function cmdVerify(positionals, flags, oakeHome) {
 			const statusLabel = entry.ots?.status === 'provisional' ? 'provisional' : 'pending';
 			console.log(
 				pendingAtt.uri
-					? `  ots_status    : ${statusLabel} (calendar ${pendingAtt.uri})`
+					? `  ots_status    : ${statusLabel} (calendar ${oneLine(pendingAtt.uri)})`
 					: `  ots_status    : ${statusLabel} (calendar pending)`
 			);
 		}
@@ -2347,7 +2372,7 @@ async function cmdVerify(positionals, flags, oakeHome) {
 				);
 			} else {
 				console.log(
-					`  rfc3161/*.tsr : ${cmsVerifiedCount}/${cmsTsrFiles.length} VERIFIED via OpenSSL System Root CAs (FAILED: ${cmsFailures.join('; ')})`
+					`  rfc3161/*.tsr : ${cmsVerifiedCount}/${cmsTsrFiles.length} VERIFIED via OpenSSL System Root CAs (FAILED: ${oneLine(cmsFailures.join('; '))})`
 				);
 			}
 		} else {
@@ -2378,7 +2403,7 @@ async function cmdVerify(positionals, flags, oakeHome) {
 			if (!res.ok) {
 				throw new Error(`POST /v1/verify failed (${res.status}): ${remote.error || res.statusText}`);
 			}
-			console.log(`Server verification: ${remote.verdict ?? 'unknown'} — ${remote.conclusion}`);
+			console.log(`Server verification: ${oneLine(remote.verdict ?? 'unknown')} — ${oneLine(remote.conclusion)}`);
 			localOk = localOk && (remote.verdict ? remote.verdict !== 'failed' : Boolean(remote.valid));
 		}
 

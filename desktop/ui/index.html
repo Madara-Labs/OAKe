@@ -220,8 +220,16 @@
 					<h3>Publishing</h3>
 					<label class="field-label" for="input-endpoint-url">Server address</label>
 					<div class="input-row">
-						<input type="url" id="input-endpoint-url" class="composer-input font-mono" placeholder="http://127.0.0.1:3000" required />
+						<input type="url" id="input-endpoint-url" class="composer-input font-mono" placeholder="https://oake.example.org" aria-describedby="endpoint-help" required />
 						<button type="submit" class="tb-btn">Save</button>
+					</div>
+					<div class="settings-help" id="endpoint-help">
+						Any server that accepts OAKe proofs. For example:
+						<ul class="endpoint-examples">
+							<li><code>https://oake.example.org</code> your university or company</li>
+							<li><code>http://127.0.0.1:3000</code> a server on this computer</li>
+							<li><code>https://madaralabs.cc</code> Madara Labs (not accepting proofs yet)</li>
+						</ul>
 					</div>
 				</form>
 
