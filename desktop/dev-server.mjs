@@ -577,6 +577,7 @@ function scanWorkspaceInternal(wsPath) {
 				ots_status: entry?.ots?.status || row.ots_status || 'provisional',
 				tsa_count: typeof row.tsa_count === 'number' ? row.tsa_count : tsaNames.length,
 				tsa_names: tsaNames,
+				tsa_ids: Array.isArray(entry?.rfc3161_tokens) ? entry.rfc3161_tokens.map((t) => t.tsa) : [],
 				ots_calendar: entry?.ots?.calendar || 'alice.btc.calendar.opentimestamps.org',
 				btc_block: entry?.ots?.btc_block ?? null,
 				client_ts: entry?.client_ts || row.captured_ts || null,

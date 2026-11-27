@@ -762,11 +762,11 @@
 
 			<div class="inspector-card">
 				<h4>Check it yourself</h4>
-				<p class="settings-help">Unzip the proof file, then run:</p>
-				${entry.tsa_count > 0 ? `<div class="cmd-box font-mono">
-					<code>openssl ts -verify -digest ${escapeHtml(digestHex)} -in rfc3161/${escapeHtml(entry.entry_id)}-certum-eu.tsr -CAfile /etc/ssl/cert.pem</code>
-					<button type="button" class="mini-btn" data-copy-cmd="openssl ts -verify -digest ${escapeHtml(digestHex)} -in rfc3161/${escapeHtml(entry.entry_id)}-certum-eu.tsr -CAfile /etc/ssl/cert.pem">Copy</button>
-				</div>` : ''}
+				<p class="settings-help">Run these in a terminal, in order. The first one unpacks the proof.</p>
+				${[
+					window.OakeCheckCommands.unzipCommand(entry.bundle_path, entry.entry_id, navigator.platform),
+					...window.OakeCheckCommands.timestampCommands(digestHex, entry.entry_id, entry.tsa_ids, navigator.platform)
+				].filter(Boolean).map(commandBox).join('')}
 				<div class="cmd-box font-mono">
 					<code>ots verify proof.ots</code>
 					<button type="button" class="mini-btn" data-copy-cmd="ots verify proof.ots">Copy</button>
@@ -790,6 +790,13 @@
 		pane.querySelectorAll('[data-copy-cmd]').forEach((btn) => {
 			btn.addEventListener('click', () => copyText(btn.getAttribute('data-copy-cmd'), 'Command copied'));
 		});
+	}
+
+	function commandBox(cmd) {
+		return `<div class="cmd-box font-mono">
+			<code>${escapeHtml(cmd)}</code>
+			<button type="button" class="mini-btn" data-copy-cmd="${escapeHtml(cmd)}">Copy</button>
+		</div>`;
 	}
 
 	const VERDICT_TITLES = {
@@ -886,6 +893,11 @@
 
 			<div class="inspector-card">
 				<h4>Check it yourself</h4>
+				<p class="settings-help">Run these in a terminal, in order. The first one unpacks the proof.</p>
+				${[window.OakeCheckCommands.unzipCommand(res.bundle_path || $('verify-bundle-path').value.trim(), res.entry_id, navigator.platform)]
+					.filter(Boolean)
+					.map(commandBox)
+					.join('')}
 				${(tsaCount > 0 ? opensslList : [])
 					.map(
 						(cmd) => `
