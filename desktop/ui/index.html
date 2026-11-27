@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>OAKe</title>
+	<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+	<div class="app-shell">
+		<!-- Custom Desktop Titlebar / Action Toolbar -->
+		<header class="titlebar" data-tauri-drag-region>
+			<div class="titlebar-brand">
+				<img class="brand-mark" src="./logo.png" alt="" width="30" height="30" />
+				<div class="brand-labels">
+					<span class="brand-title">OAKe</span>
+				</div>
+			</div>
+
+			<div class="toolbar-workspace" id="toolbar-workspace">
+				<div class="ws-current-meta">
+					<span class="ws-current-name" id="active-ws-name">No folder selected</span>
+					<span class="ws-current-path font-mono" id="active-ws-path"></span>
+				</div>
+			</div>
+
+			<div class="toolbar-actions">
+				<button class="tb-btn" id="btn-rescan" title="Rescan folder (Ctrl/Cmd+R)" disabled>Rescan</button>
+				<button class="tb-btn" id="btn-push" title="Publish proofs to your server (Ctrl/Cmd+Shift+P)" disabled>Publish</button>
+				<button class="tb-icon-btn" id="btn-open-settings" title="Settings (Ctrl/Cmd+,)" aria-label="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+			</div>
+		</header>
+
+		<!-- Main 3-Pane Desktop Workspace -->
+		<div class="workbench">
+			<!-- PANE 1: Folders -->
+			<aside class="pane-sidebar">
+				<div class="sidebar-section-head">
+					<span class="section-label">Folders</span>
+					<button class="btn-add-ws" id="btn-open-add-ws" title="Add folder">
+						+ Add
+					</button>
+				</div>
+
+				<div class="workspace-list" id="workspace-list">
+					<!-- Rendered by app.js -->
+				</div>
+
+				<div class="sidebar-footer">
+					<button type="button" class="autosave-btn" id="btn-autosave" title="Change how often edits are saved">
+						<span>Auto-save</span>
+						<span class="autosave-value" id="autosave-status">Off</span>
+					</button>
+				</div>
+			</aside>
+
+			<!-- PANE 2: Center Pane — Changes / History / Verify -->
+			<main class="pane-center">
+				<nav class="tab-bar" role="tablist">
+					<button class="tab-btn active" data-tab="changes" role="tab" aria-selected="true">
+						<span>Changes</span>
+						<span class="tab-count" id="tab-count-changes">0</span>
+					</button>
+					<button class="tab-btn" data-tab="history" role="tab" aria-selected="false">
+						<span>History</span>
+						<span class="tab-count" id="tab-count-history">0</span>
+					</button>
+					<button class="tab-btn" data-tab="verify" role="tab" aria-selected="false">
+						<span>Verify</span>
+					</button>
+				</nav>
+
+				<!-- TAB 1: CHANGES -->
+				<section class="tab-panel active" id="panel-changes">
+					<div class="changes-header">
+						<label class="check-all-label">
+							<input type="checkbox" id="checkbox-select-all" />
+							<span id="changes-summary-text">0 changed files</span>
+						</label>
+					</div>
+
+					<div class="changes-scroll" id="changes-list-container">
+						<!-- Changed/Untracked + Collapsible Anchored section rendered by app.js -->
+					</div>
+
+					<form class="anchor-composer" id="anchor-form">
+						<input type="text" id="anchor-note" class="composer-input" placeholder="Note (optional)" autocomplete="off" />
+						<button type="submit" class="btn-anchor-primary" id="btn-anchor-submit" disabled>Save</button>
+					</form>
+				</section>
+
+				<!-- TAB 2: PROVENANCE HISTORY -->
+				<section class="tab-panel" id="panel-history">
+					<div class="history-toolbar">
+						<input
+							type="search"
+							id="history-filter"
+							class="composer-input"
+							placeholder="Search history"
+						/>
+					</div>
+					<div class="history-scroll" id="history-list-container">
+						<!-- Reverse-chronological snapshots rendered by app.js -->
+					</div>
+				</section>
+
+				<!-- TAB 3: VERIFY .oake.zip -->
+				<section class="tab-panel" id="panel-verify">
+					<form class="verify-form" id="verify-form">
+						<div class="verify-field">
+							<label for="verify-bundle-path">Proof file (.oake.zip)</label>
+							<input
+								type="text"
+								id="verify-bundle-path"
+								class="composer-input font-mono"
+								placeholder="/path/to/proof.oake.zip"
+								required
+							/>
+						</div>
+						<div class="verify-field">
+							<label for="verify-original-path">Original file (optional)</label>
+							<input
+								type="text"
+								id="verify-original-path"
+								class="composer-input font-mono"
+								placeholder="/path/to/file"
+							/>
+						</div>
+						<button type="submit" class="btn-anchor-primary" id="btn-verify-submit">
+							Verify
+						</button>
+						</form>
+				</section>
+			</main>
+
+			<!-- PANE 3: Right Inspector Pane -->
+			<section class="pane-inspector" id="pane-inspector">
+				<!-- Contextual File Proof Preview / Snapshot Proof Details / Verification Report -->
+			</section>
+		</div>
+
+		<!-- Status / Notification Toast Bar -->
+		<div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+	</div>
+
+	<!-- Modal: Add Research Folder -->
+	<div class="modal-backdrop hidden" id="modal-add-ws" role="dialog" aria-modal="true" aria-labelledby="modal-add-ws-title">
+		<div class="modal-card">
+			<div class="modal-head">
+				<h2 id="modal-add-ws-title">Add folder</h2>
+				<button class="modal-close" data-close-modal="modal-add-ws" aria-label="Close">×</button>
+			</div>
+			<form id="form-add-ws" class="modal-body">
+				<label class="field-label" for="input-ws-path">Folder path</label>
+				<div class="input-row">
+					<input
+						type="text"
+						id="input-ws-path"
+						class="composer-input font-mono"
+						placeholder="/Users/you/research/paper"
+						required
+					/>
+					<button type="button" class="tb-btn" id="btn-browse-toggle">Browse…</button>
+				</div>
+				<div class="dir-browser hidden" id="dir-browser">
+					<div class="dir-browser-bar">
+						<button type="button" class="mini-btn" id="btn-browse-up">↑ Up</button>
+						<span class="font-mono dir-current" id="dir-current-label">~</span>
+						<button type="button" class="mini-btn mini-btn-accent" id="btn-use-current-dir">Select This Folder</button>
+					</div>
+					<div class="dir-browser-list" id="dir-browser-list"></div>
+				</div>
+				<div class="modal-actions">
+					<button type="button" class="tb-btn" data-close-modal="modal-add-ws">Cancel</button>
+					<button type="submit" class="btn-anchor-primary btn-compact" id="btn-add-ws-confirm">Add folder</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Modal: Settings -->
+	<div class="modal-backdrop hidden" id="modal-settings" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title">
+		<div class="modal-card">
+			<div class="modal-head">
+				<h2 id="modal-settings-title">Settings</h2>
+				<button class="modal-close" data-close-modal="modal-settings" aria-label="Close">×</button>
+			</div>
+			<div class="modal-body settings-body">
+				<section class="settings-section">
+					<h3>Auto-save</h3>
+					<label class="settings-row" for="setting-autosave"><span>Save edits</span>
+						<select id="setting-autosave" class="composer-select">
+							<option value="0">Off</option>
+							<option value="1">Every hour</option>
+							<option value="6">Every 6 hours</option>
+							<option value="12">Every 12 hours</option>
+							<option value="24">Once a day</option>
+						</select>
+					</label>
+					<p class="settings-help">Runs while OAKe is open, across all folders. Saves up to 25 changed files per run; the rest wait for the next one.</p>
+				</section>
+
+				<section class="settings-section">
+					<h3>Saving</h3>
+					<label class="settings-row" for="anchor-canon"><span>File format</span>
+						<select id="anchor-canon" class="composer-select">
+							<option value="">Automatic</option>
+							<option value="raw-bytes/v1">Exact bytes</option>
+							<option value="text-normalized/v1">Normalized text</option>
+							<option value="ipynb-cells/v1">Notebook cells</option>
+						</select>
+					</label>
+					<label class="settings-row" for="anchor-offline"><span>Work offline</span>
+						<input type="checkbox" id="anchor-offline" />
+					</label>
+					<p class="settings-help">Online, only file fingerprints are sent to the timestamp services, never file contents. Offline saves get no external timestamp.</p>
+				</section>
+
+				<form class="settings-section" id="form-endpoint">
+					<h3>Publishing</h3>
+					<label class="field-label" for="input-endpoint-url">Server address</label>
+					<div class="input-row">
+						<input type="url" id="input-endpoint-url" class="composer-input font-mono" placeholder="http://127.0.0.1:3000" required />
+						<button type="submit" class="tb-btn">Save</button>
+					</div>
+				</form>
+
+				<section class="settings-section">
+					<h3>Appearance</h3>
+					<label class="settings-row" for="setting-theme"><span>Theme</span>
+						<select id="setting-theme" class="composer-select">
+							<option value="dark">Dark</option>
+							<option value="light">Light</option>
+						</select>
+					</label>
+				</section>
+
+				<section class="settings-section">
+					<h3>Signing key</h3>
+					<button type="button" class="identity-pill font-mono" id="btn-copy-pubkey" title="Copy public key">
+						<span id="identity-pubkey-short">Loading…</span>
+					</button>
+					<div class="key-path font-mono" id="identity-key-path"></div>
+				</section>
+			</div>
+		</div>
+	</div>
+
+	<script src="./autosave.js"></script>
+	<script src="./app.js"></script>
+</body>
+</html>

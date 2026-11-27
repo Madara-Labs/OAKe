@@ -1,0 +1,187 @@
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-desktop:
+    name: Build (${{ matrix.os_label }} / ${{ matrix.target }})
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write # create the draft release on tag builds
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            os_label: macos
+            target: universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - platform: windows-latest
+            os_label: windows
+            target: x86_64-pc-windows-msvc
+            rust_targets: x86_64-pc-windows-msvc
+          - platform: ubuntu-22.04
+            os_label: linux
+            target: x86_64-unknown-linux-gnu
+            rust_targets: x86_64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux WebKitGTK dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust stable toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Generate desktop icons and run readiness check
+        run: |
+          node scripts/generate-icons.mjs
+          node scripts/build-desktop.mjs --check
+
+      # Tauri treats an empty APPLE_* variable as "set" and fails trying to import
+      # an empty certificate, so only export the secrets that actually exist.
+      # Without them the app is ad-hoc signed (tauri.conf.json signingIdentity "-").
+      - name: Export configured Apple signing secrets
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              printf '%s<<__OAKE_EOF__\n%s\n__OAKE_EOF__\n' "$name" "$value" >> "$GITHUB_ENV"
+            fi
+          done
+
+      - name: Build Tauri installers and upload to draft GitHub Release (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop/src-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: "OAKe ${{ github.ref_name }}"
+          releaseBody: "Cross-platform OAKe Desktop installers and cryptographic provenance attestation."
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Build Tauri installers (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop/src-tauri
+          args: --target ${{ matrix.target }}
+
+      - name: Upload built installers as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os_label }}
+          if-no-files-found: error
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
+
+  provenance-attestation:
+    name: Provenance Attestation (OAKe Self-Stamp)
+    needs: build-desktop
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # attach checksums and proof to the release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download built installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Compute SHA256SUMS.txt
+        run: |
+          cd release-artifacts
+          # List flat names as GitHub Releases serves them (spaces become dots),
+          # so `sha256sum -c SHA256SUMS.txt` works on downloaded assets.
+          find . -type f ! -name 'SHA256SUMS.txt' | sort | while IFS= read -r file; do
+            hash=$(sha256sum "$file" | cut -d ' ' -f 1)
+            name=$(basename "$file" | tr ' ' '.')
+            printf '%s  %s\n' "$hash" "$name"
+          done > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Stamp SHA256SUMS.txt via OAKe (Certum EU + DigiCert US + OpenTimestamps Alice)
+        run: |
+          node cli/oake.mjs init
+          node cli/oake.mjs capture release-artifacts/SHA256SUMS.txt --plain-paths --dir .
+          ls -la .oake/proofs/
+
+      - name: Upload SHA256SUMS.txt and OAKe provenance bundle as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: oake-release-provenance
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            release-artifacts/SHA256SUMS.txt
+            .oake/proofs/*.oake.zip
+
+      - name: Attach SHA256SUMS.txt and .oake.zip proof to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            release-artifacts/SHA256SUMS.txt \
+            .oake/proofs/*.oake.zip \
+            --clobber

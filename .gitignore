@@ -1,0 +1,7 @@
+node_modules/
+desktop/src-tauri/target/
+dist/
+.oake/
+*.db
+.DS_Store
+desktop/src-tauri/gen/

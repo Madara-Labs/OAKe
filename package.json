@@ -1,0 +1,28 @@
+{
+  "name": "@madara-labs/oake",
+  "version": "0.1.0",
+  "description": "OAKe Local-First Provenance CLI & Cross-Platform Desktop App",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Madara-Labs/OAKe.git"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "oake": "./cli/oake.mjs"
+  },
+  "scripts": {
+    "oake": "node cli/oake.mjs",
+    "desktop:icons": "node scripts/generate-icons.mjs",
+    "desktop:preview": "node desktop/dev-server.mjs",
+    "desktop:check": "node scripts/build-desktop.mjs --check",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:build:macos": "node scripts/build-desktop.mjs --platform macos",
+    "desktop:build:windows": "node scripts/build-desktop.mjs --platform windows",
+    "desktop:build:linux": "node scripts/build-desktop.mjs --platform linux",
+    "export-repo": "node scripts/build-desktop.mjs --export-repo"
+  }
+}
