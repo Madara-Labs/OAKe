@@ -152,6 +152,10 @@ pub struct ProvenanceCommit {
     pub path_hint: Option<String>,
     pub file_label: Option<String>,
     pub note: Option<String>,
+    pub tsa_names: Vec<String>,
+    pub tsa_ids: Vec<String>,
+    pub ots_calendar: String,
+    pub btc_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1078,6 +1082,15 @@ fn read_entry_from_bundle_file(bundle_path: &Path) -> Option<LedgerEntry> {
     let entry_file = archive.by_name("entry.json").ok()?;
     let buf = read_limited(entry_file, MAX_ENTRY_BYTES).ok()?;
     serde_json::from_slice::<LedgerEntry>(&buf).ok()
+}
+
+/// Timestamp authorities, Bitcoin calendar and block recorded in a proof, for display.
+fn proof_summary(entry: Option<&LedgerEntry>) -> (Vec<String>, String, Option<u64>) {
+    let Some(entry) = entry else {
+        return (Vec::new(), String::new(), None);
+    };
+    let tsas = entry.rfc3161_tokens.iter().map(|t| t.tsa.clone()).collect();
+    (tsas, entry.ots.calendar.clone(), entry.ots.btc_block)
 }
 
 fn generate_verify_markdown(entry: &LedgerEntry) -> String {
@@ -2454,6 +2467,8 @@ fn scan_workspace_ref(path: &str) -> Result<WorkspaceScanResult, String> {
             by_path_hint.insert(hint.clone(), (row, path_hint.clone(), note.clone()));
         }
 
+        let (tsa_ids, ots_calendar, btc_block) = proof_summary(entry_opt.as_ref());
+
         commits.push(ProvenanceCommit {
             sequence: row.sequence,
             entry_id: row.entry_id.clone(),
@@ -2469,6 +2484,10 @@ fn scan_workspace_ref(path: &str) -> Result<WorkspaceScanResult, String> {
             path_hint,
             file_label: None,
             note,
+            tsa_names: tsa_ids.clone(),
+            tsa_ids,
+            ots_calendar,
+            btc_block,
         });
     }
 
@@ -3522,5 +3541,31 @@ mod bundle_limit_tests {
         let result = verify_bundle(path.to_string_lossy().into_owned(), None);
         let _ = fs::remove_file(&path);
         assert!(result.err().unwrap().contains("too large"));
+    }
+}
+
+#[cfg(test)]
+mod history_summary_tests {
+    use super::*;
+
+    #[test]
+    fn history_names_the_timestamp_authorities_and_calendar() {
+        let entry: LedgerEntry = serde_json::from_value(json!({
+            "entry_id": "A", "user_pubkey": "anonymous", "artifact_hash": "sha256:00",
+            "canonicalization": "raw-bytes/v1", "signature": "none",
+            "client_ts": "2026-01-01T00:00:00Z", "received_ts": "2026-01-01T00:00:00Z",
+            "rfc3161_tokens": [{"tsa": "digicert-us", "token_ref": "x", "gen_time": "2026-01-01T00:00:00Z",
+                "serial_number": "1", "cert_not_after": "2036-01-01T00:00:00Z", "restamped_from": null,
+                "format": "rfc3161-cms-der", "signer_subject": "s", "policy_oid": "1"}],
+            "ots": {"status": "pending", "proof_ref": "x", "calendar": "alice.example", "batch_id": "b",
+                "btc_block": null, "btc_block_time": null, "btc_merkle_root": null, "upgraded_ts": null},
+            "capture_source": "manual", "metadata": {},
+            "chain": {"sequence": 1, "prev_entry_hash": "0", "entry_hash": "1"}
+        }))
+        .unwrap();
+        let (tsas, calendar, block) = proof_summary(Some(&entry));
+        assert_eq!(tsas, vec!["digicert-us".to_string()]);
+        assert_eq!(calendar, "alice.example");
+        assert_eq!(block, None);
     }
 }
